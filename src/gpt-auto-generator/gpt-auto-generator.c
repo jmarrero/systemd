@@ -6,6 +6,7 @@
 
 #include "alloc-util.h"
 #include "blockdev-util.h"
+#include "chase.h"
 #include "device-util.h"
 #include "devnum-util.h"
 #include "dissect-image.h"
@@ -491,10 +492,21 @@ static int add_partition_mount(
                 const char *where,
                 const char *description) {
 
-        _cleanup_free_ char *options = NULL;
+        _cleanup_free_ char *options = NULL, *resolved = NULL;
         int r;
 
         assert(p);
+
+        /* PID 1 refuses to mount on paths that contain symlinks, hence resolve them here, like
+         * systemd-fstab-generator does. This matters e.g. on OSTree systems where /home is a symlink to
+         * /var/home. */
+        r = chase(where, /* root= */ NULL, CHASE_NONEXISTENT|CHASE_NO_SYNC, &resolved, /* ret_fd= */ NULL);
+        if (r < 0)
+                log_debug_errno(r, "Failed to chase '%s', using as-is: %m", where);
+        else if (!path_equal(where, resolved)) {
+                log_debug("Canonicalized mount point '%s' to '%s'.", where, resolved);
+                where = resolved;
+        }
 
         r = path_is_busy(where);
         if (r != 0)
